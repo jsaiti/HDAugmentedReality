@@ -76,6 +76,7 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
      camera properties gathered by ARViewController. It is intended to be used by ARPresenters and external objects.
     */
     open var arStatus: ARStatus = ARStatus()
+    open var tintColor:UIColor = UIColor.black
     
     //===== Private
     fileprivate var annotations: [ARAnnotation] = []
@@ -92,6 +93,11 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
     fileprivate var debugMapButton: UIButton?
     fileprivate var debugHeadingSlider: UISlider?
     fileprivate var debugPitchSlider: UISlider?
+    
+    fileprivate var radiusSlider: UISlider!
+    fileprivate var selectedRadius:Int!
+    fileprivate var showRadiusLabel: UILabel!
+    fileprivate var bottomView:UIView!
 
     //==========================================================================================================================================================
     // MARK:                                                        Init
@@ -139,6 +145,7 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
     deinit
     {
         NotificationCenter.default.removeObserver(self)
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideViews), object: self)
         self.stopCameraAndTracking()
     }
     
@@ -183,7 +190,7 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
     
     fileprivate func onViewDidAppear()
     {
-        
+        self.addGestureRecognizerOnView()
     }
     
     fileprivate func onViewDidDisappear()
@@ -243,6 +250,9 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
         // Debug
         self.addDebugUi()
         
+        //Add Number of annotations slider
+        self.addSliderForNumberOfAnnotations()
+        
         // Must be called bcs of camera view
         self.setOrientation(UIApplication.shared.statusBarOrientation)
         self.view.layoutIfNeeded()
@@ -254,6 +264,112 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
         self.presenter.frame = self.view.bounds
         self.layoutDebugUi()
         self.calculateFOV()
+    }
+    
+    private func addSliderForNumberOfAnnotations(){
+        let frame = CGRect(x: 10, y: self.view.frame.maxY - 80, width: self.view.frame.maxX - 20, height: 70)
+        bottomView = UIView(frame: frame)
+        let viewBounds = bottomView.bounds
+        bottomView.backgroundColor = UIColor.white.withAlphaComponent(0.3)
+        bottomView.layer.cornerRadius = 8.0
+        bottomView.layer.borderColor = tintColor.cgColor
+        bottomView.layer.borderWidth = 1.0
+        
+        self.showRadiusLabel = getShowAnnotationsLabel(frame: CGRect(x: (viewBounds.maxX / 2) - 60, y: viewBounds.origin.y + 5, width: 120, height: 25))
+        self.radiusSlider = getRadiusSlider(frame:CGRect(x: viewBounds.origin.x + 10 , y: viewBounds.maxY - 35, width: viewBounds.maxX - 20, height: 30) )
+        self.sliderValChanged(value: lround(presenter.maxDistance / 2))
+        self.sliderDidRelease(self.radiusSlider)
+        self.bottomView.addSubview(self.showRadiusLabel)
+        self.bottomView.addSubview(self.radiusSlider)
+        self.view.addSubview(bottomView)
+        self.hideViewsWithDeadline(deadline: 3.0)
+    }
+    
+    private func getRadiusSlider(frame: CGRect) -> UISlider{
+        let slider: UISlider = UISlider(frame: frame)
+        slider.autoresizingMask = []
+        slider.minimumValue = 5
+        slider.maximumValue = Float(presenter.maxDistance)
+        slider.value = Float(presenter.maxDistance) / 2
+        slider.tintColor = tintColor
+        slider.addTarget(self, action: #selector(sliderValueChanged(_:)), for: .valueChanged)
+        slider.addTarget(self, action: #selector(sliderTouchUpInside(_:)), for: .touchUpInside)
+        slider.addTarget(self, action: #selector(sliderTouchDragExit(_:)), for: .touchDragExit)
+        return slider
+    }
+    
+    private func getShowAnnotationsLabel(frame: CGRect) -> UILabel{
+        let label = UILabel(frame:frame)
+        label.font = UIFont.boldSystemFont(ofSize: 15)
+        label.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+        label.textColor = tintColor
+        label.clipsToBounds = true
+        label.layer.cornerRadius = 5.0
+        label.textAlignment = .center
+        return label
+    }
+    
+    private func sliderValChanged(value:Int) {
+        selectedRadius = value
+        let text = NSLocalizedString("radius", comment: "")
+        showRadiusLabel?.text = String(format: "%@: %li m", text, value)
+        if #available(iOS 10.0, *) {
+            let impact = UIImpactFeedbackGenerator()
+            impact.impactOccurred()
+        }
+    }
+    
+    private func hideViewsWithDeadline(deadline: Double) {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideViews), object: self)
+        self.perform(#selector(hideViews) , with: self, afterDelay: deadline)
+    }
+    
+    private func addGestureRecognizerOnView() {
+        let didapGesture = UITapGestureRecognizer(target: self, action: #selector(handleShowHideViews))
+        self.view.addGestureRecognizer(didapGesture)
+        self.presenter.addGestureRecognizer(didapGesture)
+    }
+    
+    @objc private func handleShowHideViews() {
+        if  self.bottomView.isHidden {
+            showViews()
+        }else {
+            hideViewsWithDeadline(deadline: 0)
+        }
+    }
+    
+    private func showViews() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideViews), object: self)
+        if  self.bottomView.isHidden { self.bottomView.isHidden = false }
+        if self.closeButton?.isHidden ?? false { self.closeButton?.isHidden = false }
+    }
+    
+    @objc private func hideViews(){
+        self.bottomView.isHidden = true
+        self.closeButton?.isHidden = true
+    }
+    
+    @objc private func sliderValueChanged(_ sender: UISlider) {
+        let sliderValue = lroundf(sender.value)
+        if sliderValue != selectedRadius {
+            sliderValChanged(value: sliderValue)
+        }
+        sender.setValue(Float(sliderValue), animated: true)
+        self.showViews()
+    }
+    
+    @objc private func sliderTouchUpInside(_ sender: UISlider) {
+        self.sliderDidRelease(sender)
+    }
+    
+    @objc private func sliderTouchDragExit(_ sender: UISlider) {
+        self.sliderDidRelease(sender)
+    }
+    
+    private func sliderDidRelease(_ sender: UISlider) {
+        presenter.maxDistance = Double(selectedRadius)
+        presenter.reload(annotations: self.annotations, reloadType: .reloadLocationChanged)
+        self.hideViewsWithDeadline(deadline: 3.0)
     }
     
     //==========================================================================================================================================================
@@ -519,11 +635,12 @@ open class ARViewController: UIViewController, ARTrackingManagerDelegate
         }
         
         // Close button - make it customizable
-        let closeButton: UIButton = UIButton(type: UIButton.ButtonType.custom)
+        let closeButton: UIButton = UIButton(type: UIButton.ButtonType.system)
         closeButton.setImage(closeButtonImage, for: UIControl.State.normal);
         closeButton.frame = CGRect(x: self.view.bounds.size.width - 45, y: 5,width: 40,height: 40)
         closeButton.addTarget(self, action: #selector(ARViewController.closeButtonTap), for: UIControl.Event.touchUpInside)
         closeButton.autoresizingMask = [UIView.AutoresizingMask.flexibleLeftMargin, UIView.AutoresizingMask.flexibleBottomMargin]
+        closeButton.tintColor = tintColor
         self.view.addSubview(closeButton)
         self.closeButton = closeButton
     }
